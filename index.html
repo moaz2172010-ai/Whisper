@@ -1,0 +1,746 @@
+<!--
+  ============================================
+  Whisper Chat - النسخة النهائية
+  إعدادات Firebase: مركبة ✅
+  المتبقي: لصق القواعد في Firestore -> Rules -> Publish:
+  rules_version = '2';
+  service cloud.firestore {
+    match /databases/{database}/documents {
+      match /{document=**} {
+        allow read, write: if request.auth != null;
+      }
+    }
+  }
+  ============================================
+-->
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#ec4899" />
+  <title>Whisper Chat 🔒</title>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body, #root { min-height: 100%; margin: 0; }
+    body {
+      background: #fdf2f8;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-thumb { background: #f9a8d4; border-radius: 20px; }
+    textarea { resize: none; }
+  </style>
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef } = React;
+
+    /* =========================================================
+       ⚙️ CONFIG — إعدادات مشروعك (جاهزة ✅)
+    ========================================================= */
+    const firebaseConfig = {
+      apiKey: "AIzaSyCecSTugKLBD675faW75TDdXIAi5b8Q8_Q",
+      authDomain: "whisper-a06ce.firebaseapp.com",
+      projectId: "whisper-a06ce",
+      storageBucket: "whisper-a06ce.firebasestorage.app",
+      messagingSenderId: "844907788296",
+      appId: "1:844907788296:web:6de487ec9af2f5f222f9bd"
+    };
+
+    const CONFIGURED = firebaseConfig.apiKey && firebaseConfig.apiKey.length > 20;
+    const cryptoOk = typeof crypto !== "undefined" && !!crypto.subtle;
+
+    let auth = null, db = null;
+    if (CONFIGURED && window.firebase) {
+      firebase.initializeApp(firebaseConfig);
+      auth = firebase.auth();
+      db = firebase.firestore();
+    }
+
+    const MAX_MESSAGE_LENGTH = 1000;
+
+    const T = {
+      subtitle: "محادثات مشفرة طرف-لطرف 🔒",
+      loginTab: "دخول",
+      registerTab: "حساب جديد",
+      name: "الاسم",
+      email: "البريد الإلكتروني",
+      password: "كلمة المرور",
+      doLogin: "دخول",
+      doRegister: "إنشاء الحساب",
+      chatsTab: "💬 محادثاتي",
+      usersTab: "👥 مستخدمون",
+      search: "ابحث بالاسم...",
+      noChats: "لا توجد محادثات بعد",
+      noChatsSub: "اذهب لتبويب «مستخدمون» وابدأ محادثة جديدة",
+      noUsers: "لا يوجد مستخدمون آخرون",
+      online: "متصل",
+      offline: "غير متصل",
+      logout: "خروج",
+      typeMessage: "اكتب رسالة مشفرة...",
+      send: "إرسال",
+      encrypted: "مشفرة E2E",
+      peerNoKey: "⚠️ اطلب من الطرف الآخر فتح التطبيق مرة واحدة حتى يتم تبادل المفاتيح",
+      charLimit: "الرسالة طويلة جدًا.",
+      loading: "جاري التحميل...",
+      configTitle: "إعداد Firebase مطلوب",
+      configText: "افتح الكود والصق إعدادات مشروع Firebase في أعلى السكربت.",
+      noCrypto: "المتصفح لا يدعم التشفير — افتح الملف عبر https أو localhost.",
+      msgFailed: "تعذر الإرسال — تحقق من الإنترنت",
+      msgDecryptFail: "⚠️ تعذر فك التشفير"
+    };
+
+    function authError(code) {
+      const map = {
+        "auth/email-already-in-use": "البريد مستخدم بالفعل",
+        "auth/invalid-email": "بريد غير صالح",
+        "auth/weak-password": "كلمة المرور ضعيفة (6 أحرف على الأقل)",
+        "auth/invalid-credential": "بيانات الدخول غير صحيحة",
+        "auth/user-not-found": "لا يوجد حساب بهذا البريد",
+        "auth/wrong-password": "كلمة المرور خاطئة",
+        "auth/network-request-failed": "تحقق من الاتصال بالإنترنت",
+        "auth/too-many-requests": "محاولات كثيرة — انتظر قليلًا"
+      };
+      return map[code] || "حدث خطأ، حاول مجددًا";
+    }
+
+    /* =========================
+       CRYPTO
+    ========================= */
+    function b64encode(buf) {
+      return btoa(String.fromCharCode(...new Uint8Array(buf)));
+    }
+    function b64decode(b64) {
+      return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    }
+
+    async function loadOrCreateIdentity(uid) {
+      const k = "wk_keys_" + uid;
+      try {
+        const raw = localStorage.getItem(k);
+        if (raw) {
+          const { privJwk, pubB64 } = JSON.parse(raw);
+          const priv = await crypto.subtle.importKey(
+            "jwk", privJwk, { name: "ECDH", namedCurve: "P-256" }, false, ["deriveKey"]);
+          const pub = await crypto.subtle.importKey(
+            "raw", b64decode(pubB64), { name: "ECDH", namedCurve: "P-256" }, false, []);
+          return { kp: { privateKey: priv, publicKey: pub }, pubB64 };
+        }
+      } catch {}
+      const kp = await crypto.subtle.generateKey(
+        { name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]);
+      const pubB64 = b64encode(await crypto.subtle.exportKey("raw", kp.publicKey));
+      const privJwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+      localStorage.setItem(k, JSON.stringify({ privJwk, pubB64 }));
+      const priv = await crypto.subtle.importKey(
+        "jwk", privJwk, { name: "ECDH", namedCurve: "P-256" }, false, ["deriveKey"]);
+      return { kp: { privateKey: priv, publicKey: kp.publicKey }, pubB64 };
+    }
+
+    async function deriveAesKey(myKp, peerPubB64) {
+      const peerPub = await crypto.subtle.importKey(
+        "raw", b64decode(peerPubB64), { name: "ECDH", namedCurve: "P-256" }, false, []);
+      return crypto.subtle.deriveKey(
+        { name: "ECDH", public: peerPub },
+        myKp.privateKey,
+        { name: "AES-GCM", length: 256 },
+        false, ["encrypt", "decrypt"]);
+    }
+
+    async function encryptText(key, text) {
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ct = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv }, key, new TextEncoder().encode(text));
+      return b64encode(iv) + "." + b64encode(ct);
+    }
+
+    async function decryptText(key, payload) {
+      const [ivB64, ctB64] = payload.split(".");
+      const pt = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: b64decode(ivB64) }, key, b64decode(ctB64));
+      return new TextDecoder().decode(pt);
+    }
+
+    function beep() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.frequency.value = 880;
+        g.gain.setValueAtTime(0.08, ctx.currentTime);
+        o.start(); o.stop(ctx.currentTime + 0.15);
+      } catch {}
+    }
+
+    function getInitial(name) {
+      if (!name) return "?";
+      return String(name).trim().charAt(0).toUpperCase();
+    }
+
+    function formatTime(ms) {
+      try {
+        return new Intl.DateTimeFormat("ar", { hour: "2-digit", minute: "2-digit" })
+          .format(new Date(ms));
+      } catch { return ""; }
+    }
+
+    function isOnline(u) {
+      if (!u || !u.lastActive || !u.lastActive.toMillis) return false;
+      return Date.now() - u.lastActive.toMillis() < 120000;
+    }
+
+    /* =========================
+       APP
+    ========================= */
+    function App() {
+      const [user, setUser] = useState(undefined);
+      const [isRegister, setIsRegister] = useState(false);
+      const [nameInput, setNameInput] = useState("");
+      const [email, setEmail] = useState("");
+      const [pass, setPass] = useState("");
+
+      const [usersMap, setUsersMap] = useState({});
+      const [chats, setChats] = useState([]);
+      const [tab, setTab] = useState("chats");
+      const [search, setSearch] = useState("");
+
+      const [activePeer, setActivePeer] = useState(null);
+      const [peerKey, setPeerKey] = useState("idle");
+      const [msgs, setMsgs] = useState([]);
+      const [input, setInput] = useState("");
+      const [notice, setNotice] = useState("");
+
+      const unsubUsers = useRef(null);
+      const unsubChats = useRef(null);
+      const unsubMsgs = useRef(null);
+      const heartbeatRef = useRef(null);
+      const identityRef = useRef(null);
+      const aesRef = useRef(null);
+      const decrypting = useRef(new Set());
+      const chatEndRef = useRef(null);
+      const inputRef = useRef(null);
+
+      useEffect(() => {
+        if (notice) {
+          const t = setTimeout(() => setNotice(""), 3000);
+          return () => clearTimeout(t);
+        }
+      }, [notice]);
+
+      useEffect(() => {
+        requestAnimationFrame(() => {
+          chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        });
+      }, [msgs]);
+
+      useEffect(() => {
+        const el = inputRef.current;
+        if (!el) return;
+        el.style.height = "auto";
+        el.style.height = Math.min(el.scrollHeight, 112) + "px";
+      }, [input]);
+
+      function stopHeartbeat() {
+        if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
+      }
+
+      function startHeartbeat(uid) {
+        stopHeartbeat();
+        const beat = () => {
+          db.collection("users").doc(uid)
+            .update({ lastActive: firebase.firestore.FieldValue.serverTimestamp() })
+            .catch(() => {});
+        };
+        beat();
+        heartbeatRef.current = setInterval(beat, 60000);
+      }
+
+      useEffect(() => {
+        if (!CONFIGURED) { setUser(null); return; }
+        const un = auth.onAuthStateChanged(async u => {
+          setUser(u || null);
+          if (u) {
+            try {
+              identityRef.current = await loadOrCreateIdentity(u.uid);
+              db.collection("users").doc(u.uid).set({
+                pubKey: identityRef.current.pubB64,
+                lastActive: firebase.firestore.FieldValue.serverTimestamp()
+              }, { merge: true });
+              startHeartbeat(u.uid);
+            } catch { setNotice(T.noCrypto); }
+
+            unsubUsers.current = db.collection("users").onSnapshot(s => {
+              const m = {};
+              s.forEach(d => m[d.id] = d.data());
+              setUsersMap(m);
+            });
+            unsubChats.current = db.collection("chats")
+              .where("participants", "array-contains", u.uid)
+              .onSnapshot(s => setChats(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+          } else {
+            stopHeartbeat();
+            unsubUsers.current?.(); unsubChats.current?.(); unsubMsgs.current?.();
+            setUsersMap({}); setChats([]); setActivePeer(null); setMsgs([]);
+            identityRef.current = null; aesRef.current = null;
+          }
+        });
+        return () => un();
+      }, []);
+
+      async function doAuth(e) {
+        e.preventDefault();
+        try {
+          if (isRegister) {
+            if (!nameInput.trim()) { setNotice("اكتب اسمك"); return; }
+            const cred = await auth.createUserWithEmailAndPassword(email.trim(), pass);
+            await cred.user.updateProfile({ displayName: nameInput.trim() });
+            await db.collection("users").doc(cred.user.uid).set({
+              name: nameInput.trim(),
+              pubKey: "",
+              lastActive: firebase.firestore.FieldValue.serverTimestamp()
+            });
+          } else {
+            await auth.signInWithEmailAndPassword(email.trim(), pass);
+          }
+        } catch (err) {
+          setNotice(authError(err.code));
+        }
+      }
+
+      function doLogout() {
+        auth.signOut();
+      }
+
+      const chatIdFor = (a, b) => [a, b].sort().join("_");
+
+      async function openChat(peerUid) {
+        if (!user || !identityRef.current) return;
+        setActivePeer(peerUid);
+        setMsgs([]); setInput(""); setPeerKey("idle");
+        aesRef.current = null;
+        decrypting.current = new Set();
+
+        const chatId = chatIdFor(user.uid, peerUid);
+        const cref = db.collection("chats").doc(chatId);
+        try {
+          const snap = await cref.get();
+          if (!snap.exists) {
+            await cref.set({
+              participants: [user.uid, peerUid],
+              createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+          }
+        } catch { setNotice(T.msgFailed); }
+
+        tryDerivePeerKey(peerUid);
+
+        unsubMsgs.current?.();
+        unsubMsgs.current = cref.collection("messages")
+          .orderBy("ts", "asc").limitToLast(100)
+          .onSnapshot(s => {
+            let incoming = false;
+            s.docChanges().forEach(c => {
+              if (c.type === "added" && c.doc.data().senderId !== user.uid) incoming = true;
+            });
+            const arr = [];
+            s.forEach(d => {
+              const v = d.data();
+              arr.push({
+                id: d.id,
+                senderId: v.senderId,
+                payload: v.payload,
+                text: null,
+                ts: v.ts && v.ts.toMillis ? v.ts.toMillis() : Date.now()
+              });
+            });
+            setMsgs(arr);
+            if (incoming && document.hidden) beep();
+          });
+      }
+
+      function tryDerivePeerKey(peerUid) {
+        if (!identityRef.current) return;
+        const peer = usersMap[peerUid];
+        if (peer && peer.pubKey) {
+          deriveAesKey(identityRef.current.kp, peer.pubKey)
+            .then(k => { aesRef.current = k; setPeerKey("ok"); })
+            .catch(() => setPeerKey("missing"));
+        } else {
+          setPeerKey("missing");
+        }
+      }
+
+      useEffect(() => {
+        if (activePeer && peerKey === "missing") tryDerivePeerKey(activePeer);
+      }, [usersMap, activePeer]);
+
+      useEffect(() => {
+        if (!aesRef.current) return;
+        msgs.forEach(async m => {
+          if (m.text !== null || decrypting.current.has(m.id)) return;
+          decrypting.current.add(m.id);
+          try {
+            const t = await decryptText(aesRef.current, m.payload);
+            setMsgs(prev => prev.map(x => x.id === m.id ? { ...x, text: t } : x));
+          } catch {
+            setMsgs(prev => prev.map(x => x.id === m.id
+              ? { ...x, text: T.msgDecryptFail, err: true } : x));
+          }
+        });
+      }, [msgs]);
+
+      function backToHome() {
+        unsubMsgs.current?.();
+        unsubMsgs.current = null;
+        setActivePeer(null); setMsgs([]); aesRef.current = null; setPeerKey("idle");
+      }
+
+      async function sendMessage(e) {
+        e.preventDefault();
+        const text = input.trim();
+        if (!text || !aesRef.current || !activePeer) return;
+        if (text.length > MAX_MESSAGE_LENGTH) { setNotice(T.charLimit); return; }
+        try {
+          const payload = await encryptText(aesRef.current, text);
+          const chatId = chatIdFor(user.uid, activePeer);
+          await db.collection("chats").doc(chatId).collection("messages").add({
+            senderId: user.uid,
+            payload: payload,
+            ts: firebase.firestore.FieldValue.serverTimestamp()
+          });
+          setInput("");
+          setTimeout(() => inputRef.current?.focus(), 50);
+        } catch {
+          setNotice(T.msgFailed);
+        }
+      }
+
+      function handleKeyDown(e) {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage(e);
+        }
+      }
+
+      /* =========================
+         RENDER
+      ========================= */
+
+      if (user === undefined) {
+        return (
+          <div className="min-h-screen flex items-center justify-center" dir="rtl">
+            <div className="flex items-center gap-2 text-pink-600 text-sm">
+              <span className="w-4 h-4 border-2 border-pink-300 border-t-pink-600 rounded-full animate-spin" />
+              {T.loading}
+            </div>
+          </div>
+        );
+      }
+
+      if (!user) {
+        return (
+          <div className="min-h-screen flex items-center justify-center px-4" dir="rtl">
+            <div className="w-full max-w-sm">
+              <div className="text-center mb-8">
+                <div className="w-20 h-20 mx-auto mb-5 rounded-[26px] bg-gradient-to-br from-pink-400 to-pink-600 text-white flex items-center justify-center text-3xl shadow-xl shadow-pink-200">
+                  🔒
+                </div>
+                <h1 className="text-3xl font-bold text-pink-900">Whisper</h1>
+                <p className="text-sm text-slate-500 mt-2">{T.subtitle}</p>
+              </div>
+
+              <div className="bg-white rounded-[28px] p-6 shadow-xl shadow-pink-100 border border-pink-100">
+                <div className="grid grid-cols-2 gap-1 bg-pink-50 rounded-2xl p-1 mb-5">
+                  <button
+                    onClick={() => setIsRegister(false)}
+                    className={"py-2 rounded-xl text-xs font-semibold transition " + (!isRegister ? "bg-white shadow text-pink-600" : "text-slate-400")}
+                  >{T.loginTab}</button>
+                  <button
+                    onClick={() => setIsRegister(true)}
+                    className={"py-2 rounded-xl text-xs font-semibold transition " + (isRegister ? "bg-white shadow text-pink-600" : "text-slate-400")}
+                  >{T.registerTab}</button>
+                </div>
+
+                <form onSubmit={doAuth} className="space-y-3">
+                  {isRegister && (
+                    <input
+                      type="text" maxLength="40" value={nameInput}
+                      onChange={e => setNameInput(e.target.value)}
+                      placeholder={T.name}
+                      className="w-full px-4 py-3 rounded-2xl bg-pink-50 border border-pink-100 outline-none text-sm focus:border-pink-400 focus:ring-2 focus:ring-pink-100 transition"
+                    />
+                  )}
+                  <input
+                    type="email" value={email} dir="ltr"
+                    onChange={e => setEmail(e.target.value)}
+                    placeholder={T.email} required
+                    className="w-full px-4 py-3 rounded-2xl bg-pink-50 border border-pink-100 outline-none text-sm focus:border-pink-400 focus:ring-2 focus:ring-pink-100 transition"
+                  />
+                  <input
+                    type="password" value={pass} dir="ltr"
+                    onChange={e => setPass(e.target.value)}
+                    placeholder={T.password} required minLength="6"
+                    className="w-full px-4 py-3 rounded-2xl bg-pink-50 border border-pink-100 outline-none text-sm focus:border-pink-400 focus:ring-2 focus:ring-pink-100 transition"
+                  />
+                  <button type="submit"
+                    className="w-full py-3 rounded-2xl bg-pink-500 hover:bg-pink-600 active:scale-[0.98] text-white font-semibold text-sm shadow-lg shadow-pink-200 transition">
+                    {isRegister ? T.doRegister : T.doLogin}
+                  </button>
+                </form>
+
+                {!cryptoOk && <p className="text-center text-[11px] text-red-500 mt-3">{T.noCrypto}</p>}
+              </div>
+
+              <Notice notice={notice} />
+            </div>
+          </div>
+        );
+      }
+
+      if (activePeer) {
+        const peer = usersMap[activePeer] || {};
+        const peerOn = isOnline(peer);
+        return (
+          <div className="min-h-screen bg-pink-50 flex justify-center" dir="rtl">
+            <div className="w-full max-w-md min-h-screen bg-white flex flex-col shadow-2xl relative overflow-hidden">
+
+              <header className="shrink-0 bg-gradient-to-r from-pink-500 to-pink-600 text-white px-4 py-3 flex items-center justify-between shadow-md z-20">
+                <div className="flex items-center gap-3">
+                  <button onClick={backToHome} className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 transition text-sm">→</button>
+                  <div className="w-10 h-10 rounded-2xl bg-white/20 border border-white/20 flex items-center justify-center font-bold text-sm">
+                    {getInitial(peer.name)}
+                  </div>
+                  <div>
+                    <h1 className="font-bold text-sm">{peer.name || "..."}</h1>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className={"w-1.5 h-1.5 rounded-full " + (peerOn ? "bg-emerald-300" : "bg-slate-300")} />
+                      <span className="text-[10px] text-pink-100">{peerOn ? T.online : T.offline}</span>
+                    </div>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1.5 rounded-xl bg-white/10 text-[10px]">🔒 {T.encrypted}</span>
+              </header>
+
+              {peerKey === "missing" && (
+                <div className="shrink-0 bg-amber-50 border-b border-amber-100 px-4 py-2 text-center text-[11px] text-amber-600">
+                  {T.peerNoKey}
+                </div>
+              )}
+
+              <main className="flex-1 overflow-y-auto px-3 py-4 bg-gradient-to-b from-pink-50/70 to-white">
+                {msgs.length === 0 && (
+                  <div className="min-h-[45vh] flex flex-col items-center justify-center text-center">
+                    <div className="w-16 h-16 rounded-3xl bg-pink-100 flex items-center justify-center text-2xl mb-4">💬</div>
+                    <p className="text-xs text-slate-400 max-w-[240px] leading-relaxed">
+                      بداية المحادثة المشفرة مع {peer.name || ""} 🔒
+                    </p>
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  {msgs.map(m => {
+                    const me = m.senderId === user.uid;
+                    return (
+                      <div key={m.id} className={"flex items-end gap-2 " + (me ? "flex-row-reverse" : "flex-row")}>
+                        <div className="w-7 h-7 shrink-0 rounded-full bg-pink-100 border border-pink-200 text-pink-700 flex items-center justify-center text-[10px] font-bold">
+                          {me ? getInitial(usersMap[user.uid]?.name || "أنا") : getInitial(peer.name)}
+                        </div>
+                        <div className={"max-w-[78%] px-3.5 py-2.5 rounded-2xl shadow-sm " + (
+                          me
+                            ? "bg-pink-500 text-white rounded-br-md"
+                            : "bg-white text-slate-700 border border-pink-100 rounded-bl-md")}>
+                          <p className={"text-xs leading-relaxed whitespace-pre-wrap break-words " + (m.err ? "text-amber-500" : "")}>
+                            {m.text === null ? "···" : m.text}
+                          </p>
+                          <div className={"flex justify-end items-center gap-1 mt-1 text-[9px] " + (me ? "text-pink-100" : "text-slate-400")}>
+                            <span>{formatTime(m.ts)}</span>
+                            {me && <span className="text-[10px]">✓</span>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div ref={chatEndRef} />
+              </main>
+
+              <form onSubmit={sendMessage} className="shrink-0 bg-white border-t border-pink-100 p-3">
+                <div className="flex items-end gap-2 bg-pink-50 border border-pink-100 rounded-2xl p-1.5 focus-within:border-pink-300 focus-within:ring-2 focus-within:ring-pink-50 transition">
+                  <textarea
+                    ref={inputRef} rows="1" value={input}
+                    onChange={e => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={T.typeMessage}
+                    disabled={peerKey !== "ok"}
+                    className="flex-1 bg-transparent outline-none px-2.5 py-2 text-xs text-slate-700 placeholder:text-slate-400 max-h-28 disabled:opacity-50"
+                  />
+                  <button type="submit"
+                    disabled={!input.trim() || peerKey !== "ok"}
+                    className="w-9 h-9 shrink-0 rounded-xl bg-pink-500 hover:bg-pink-600 disabled:opacity-30 disabled:cursor-not-allowed text-white flex items-center justify-center transition active:scale-95"
+                    aria-label={T.send}>
+                    <span className="inline-block rotate-180">➤</span>
+                  </button>
+                </div>
+                <div className={"text-[9px] mt-1.5 text-center " + (input.length > MAX_MESSAGE_LENGTH ? "text-red-400 font-bold" : "text-slate-300")}>
+                  {input.length}/{MAX_MESSAGE_LENGTH}
+                </div>
+              </form>
+
+              <Notice notice={notice} />
+            </div>
+          </div>
+        );
+      }
+
+      const meInfo = usersMap[user.uid] || {};
+      const chatList = chats
+        .map(c => ({ chat: c, peerUid: c.participants.find(p => p !== user.uid) }))
+        .filter(x => x.peerUid)
+        .map(x => ({ ...x, peer: usersMap[x.peerUid] || {} }));
+
+      const usersList = Object.entries(usersMap)
+        .filter(([uid]) => uid !== user.uid)
+        .map(([uid, v]) => ({ uid, ...v }))
+        .filter(u => !search.trim() || (u.name || "").includes(search.trim()));
+
+      return (
+        <div className="min-h-screen bg-pink-50 flex justify-center" dir="rtl">
+          <div className="w-full max-w-md min-h-screen bg-white flex flex-col shadow-2xl relative overflow-hidden">
+
+            <header className="shrink-0 bg-gradient-to-r from-pink-500 to-pink-600 text-white px-4 py-3 flex items-center justify-between shadow-md z-20">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-white/20 border border-white/20 flex items-center justify-center font-bold text-sm">
+                  {getInitial(meInfo.name || user.email)}
+                </div>
+                <div>
+                  <h1 className="font-bold text-sm">{meInfo.name || "أنا"}</h1>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-300" />
+                    <span className="text-[10px] text-pink-100">{T.online}</span>
+                  </div>
+                </div>
+              </div>
+              <button onClick={doLogout}
+                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-[11px] transition">
+                {T.logout} ⬅
+              </button>
+            </header>
+
+            <div className="shrink-0 grid grid-cols-2 gap-1 bg-white border-b border-pink-100 p-2">
+              <button onClick={() => setTab("chats")}
+                className={"py-2 rounded-xl text-xs font-semibold transition " + (tab === "chats" ? "bg-pink-500 text-white shadow" : "text-slate-400 hover:bg-pink-50")}>
+                {T.chatsTab}
+              </button>
+              <button onClick={() => setTab("users")}
+                className={"py-2 rounded-xl text-xs font-semibold transition " + (tab === "users" ? "bg-pink-500 text-white shadow" : "text-slate-400 hover:bg-pink-50")}>
+                {T.usersTab}
+              </button>
+            </div>
+
+            <main className="flex-1 overflow-y-auto p-3 bg-gradient-to-b from-pink-50/70 to-white">
+
+              {tab === "users" && (
+                <div className="mb-3">
+                  <input
+                    type="text" value={search} onChange={e => setSearch(e.target.value)}
+                    placeholder={T.search}
+                    className="w-full px-4 py-2.5 rounded-2xl bg-white border border-pink-100 outline-none text-xs focus:border-pink-400 focus:ring-2 focus:ring-pink-100 transition"
+                  />
+                </div>
+              )}
+
+              {tab === "chats" && (
+                chatList.length === 0 ? (
+                  <div className="min-h-[50vh] flex flex-col items-center justify-center text-center">
+                    <div className="w-16 h-16 rounded-3xl bg-pink-100 flex items-center justify-center text-2xl mb-4">💬</div>
+                    <h2 className="font-bold text-slate-700 text-sm">{T.noChats}</h2>
+                    <p className="text-xs text-slate-400 mt-2 max-w-[240px]">{T.noChatsSub}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {chatList.map(x => (
+                      <button key={x.chat.id} onClick={() => openChat(x.peerUid)}
+                        className="w-full flex items-center gap-3 bg-white border border-pink-100 rounded-2xl p-3 hover:border-pink-300 hover:shadow-md transition text-start">
+                        <div className="w-11 h-11 rounded-2xl bg-pink-100 text-pink-700 flex items-center justify-center font-bold text-sm shrink-0">
+                          {getInitial(x.peer.name)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-bold text-xs text-slate-800">{x.peer.name || "مستخدم"}</div>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <span className={"w-1.5 h-1.5 rounded-full " + (isOnline(x.peer) ? "bg-emerald-400" : "bg-slate-300")} />
+                            <span className="text-[10px] text-slate-400">
+                              {isOnline(x.peer) ? T.online : T.offline} · 🔒 رسالة مشفرة
+                            </span>
+                          </div>
+                        </div>
+                        <span className="text-slate-300 text-xs">‹</span>
+                      </button>
+                    ))}
+                  </div>
+                )
+              )}
+
+              {tab === "users" && (
+                usersList.length === 0 ? (
+                  <div className="min-h-[50vh] flex flex-col items-center justify-center text-center">
+                    <div className="w-16 h-16 rounded-3xl bg-pink-100 flex items-center justify-center text-2xl mb-4">👥</div>
+                    <h2 className="font-bold text-slate-700 text-sm">{T.noUsers}</h2>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {usersList.map(u => (
+                      <button key={u.uid} onClick={() => openChat(u.uid)}
+                        className="w-full flex items-center gap-3 bg-white border border-pink-100 rounded-2xl p-3 hover:border-pink-300 hover:shadow-md transition text-start">
+                        <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-pink-400 to-pink-600 text-white flex items-center justify-center font-bold text-sm shrink-0">
+                          {getInitial(u.name)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-bold text-xs text-slate-800">{u.name || "مستخدم"}</div>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <span className={"w-1.5 h-1.5 rounded-full " + (isOnline(u) ? "bg-emerald-400" : "bg-slate-300")} />
+                            <span className="text-[10px] text-slate-400">{isOnline(u) ? T.online : T.offline}</span>
+                          </div>
+                        </div>
+                        <span className="text-pink-400 text-lg">💬</span>
+                      </button>
+                    ))}
+                  </div>
+                )
+              )}
+
+            </main>
+
+            <Notice notice={notice} />
+          </div>
+        </div>
+      );
+    }
+
+    function Notice({ notice }) {
+      if (!notice) return null;
+      return (
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[11px] px-4 py-2 rounded-full shadow-lg z-40 whitespace-nowrap">
+          {notice}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
